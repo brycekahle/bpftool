@@ -2140,18 +2140,29 @@ static int btfgen_remap_id(__u32 *type_id, void *ctx)
 /* Generate BTF from relocation information previously recorded */
 static struct btf *btfgen_get_btf(struct btfgen_info *info)
 {
-	struct btf *btf_new = NULL;
+	struct btf *btf_new = NULL, *src_base_btf_new = NULL;
 	unsigned int *ids = NULL;
-	const struct btf *base;
+	const struct btf *src_base_btf;
 	unsigned int i, n = btf__type_cnt(info->marked_btf);
-	int start_id = 1;
-	int err = 0;
+	int start_id, err = 0;
 
-	base = btf__base_btf(info->src_btf);
-	if (base)
-		start_id = btf__type_cnt(base);
+	src_base_btf = btf__base_btf(info->src_btf);
+	start_id = base_btf ? btf__type_cnt(base_btf) : 1;
 
-	btf_new = btf__new_empty_split((struct btf *)base);
+	/* clone BTF to sanitize a copy and leave the original intact */
+	if (src_base_btf) {
+		const void *raw_data;
+		__u32 sz;
+
+		raw_data = btf__raw_data(src_base_btf, &sz);
+		src_base_btf_new = btf__new(raw_data, sz);
+		if (!src_base_btf_new) {
+			err = -errno;
+			goto err_out;
+		}
+	}
+
+	btf_new = btf__new_empty_split(src_base_btf_new);
 	if (!btf_new) {
 		err = -errno;
 		goto err_out;

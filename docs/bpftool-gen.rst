@@ -458,5 +458,5 @@ Kernel module BTF may also be minimized by using the -B option:
 **$ bpftool -B 5.4.0-smaller.btf gen min_core_btf 5.4.0-module.btf 5.4.0-module-smaller.btf one.bpf.o**
 
 A minimized module BTF will still not contain vmlinux BTF types, so you
-should always minimize the vmlinux file first, and then minimize the 
+should always minimize the vmlinux file first, and then minimize the
 kernel module file.
