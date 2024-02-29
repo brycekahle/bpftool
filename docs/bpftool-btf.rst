@@ -25,6 +25,7 @@ BTF COMMANDS
 
 |	**bpftool** **btf** { **show** | **list** } [**id** *BTF_ID*]
 |	**bpftool** **btf dump** *BTF_SRC* [**format** *FORMAT*]
+|	**bpftool** **btf merge** *OUTPUT_FILE* *INPUT_FILE* [*INPUT_FILE*...]
 |	**bpftool** **btf help**
 |
 |	*BTF_SRC* := { **id** *BTF_ID* | **prog** *PROG* | **map** *MAP* [{**key** | **value** | **kv** | **all**}] | **file** *FILE* }
@@ -69,6 +70,15 @@ DESCRIPTION
 		  **format** option can be used to override default (raw)
 		  output format. Raw (**raw**) or C-syntax (**c**) output
 		  formats are supported.
+
+        **bpftool btf merge** *OUTPUT_FILE* *INPUT_FILE* [*INPUT_FILE*...]
+                  Merge BTF entries from one more *INPUT_FILE*s into a single
+                  resulting *OUTPUT_FILE*. BTF IDs may be renumbered and
+                  types will be deduplicated.
+
+                  When a base BTF object is provided, it will apply to all
+                  *INPUT_FILE*s. The resulting *OUTPUT_FILE* will contain
+                  the base BTF entries.
 
 	**bpftool btf help**
 		  Print short help message.
@@ -266,3 +276,7 @@ All the standard ways to specify map or program are supported:
   [104859] FUNC 'smbalert_work' type_id=9695 linkage=static
   [104860] FUNC 'smbus_alert' type_id=71367 linkage=static
   [104861] FUNC 'smbus_do_alert' type_id=84827 linkage=static
+
+**# bpftool btf merge out.btf one.btf two.btf**
+
+**# bpftool -B vmlinux btf merge out.btf mod_one mod_two**

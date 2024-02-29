@@ -1640,7 +1640,7 @@ static int do_help(int argc, char **argv)
 	return 0;
 }
 
-static int btf_save_raw(const struct btf *btf, const char *path)
+int btf_save_raw(const struct btf *btf, const char *path)
 {
 	const void *data;
 	FILE *f = NULL;

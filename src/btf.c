@@ -16,11 +16,12 @@
 #include <bpf/btf.h>
 #include <bpf/hashmap.h>
 #include <bpf/libbpf.h>
+#include <bpf/libbpf_internal.h>
 
 #include "json_writer.h"
 #include "main.h"
 
-static const char * const btf_kind_str[NR_BTF_KINDS] = {
+static const char * const btf_kind_str_upper[NR_BTF_KINDS] = {
 	[BTF_KIND_UNKN]		= "UNKNOWN",
 	[BTF_KIND_INT]		= "INT",
 	[BTF_KIND_PTR]		= "PTR",
@@ -108,10 +109,10 @@ static int dump_btf_type(const struct btf *btf, __u32 id,
 	if (json_output) {
 		jsonw_start_object(w);
 		jsonw_uint_field(w, "id", id);
-		jsonw_string_field(w, "kind", btf_kind_str[btf_kind_safe(kind)]);
+		jsonw_string_field(w, "kind", btf_kind_str_upper[btf_kind_safe(kind)]);
 		jsonw_string_field(w, "name", btf_str(btf, t->name_off));
 	} else {
-		printf("[%u] %s '%s'", id, btf_kind_str[btf_kind_safe(kind)],
+		printf("[%u] %s '%s'", id, btf_kind_str_upper[btf_kind_safe(kind)],
 		       btf_str(btf, t->name_off));
 	}
 
@@ -376,7 +377,7 @@ static int dump_btf_type(const struct btf *btf, __u32 id,
 				if (v->type < btf__type_cnt(btf)) {
 					vt = btf__type_by_id(btf, v->type);
 					printf(" (%s '%s')",
-					       btf_kind_str[btf_kind_safe(btf_kind(vt))],
+					       btf_kind_str_upper[btf_kind_safe(btf_kind(vt))],
 					       btf_str(btf, vt->name_off));
 				}
 			}
@@ -1050,6 +1051,123 @@ exit_free:
 	return err;
 }
 
+static int btfmerge_remap_id(__u32 *type_id, void *ctx)
+{
+	unsigned int *ids = ctx;
+
+	*type_id = ids[*type_id];
+
+	return 0;
+}
+
+static struct btf *btfmerge_clone_btf(const struct btf *btf)
+{
+	const void *raw_data;
+	__u32 sz;
+
+	raw_data = btf__raw_data(btf, &sz);
+	return btf__new(raw_data, sz);
+}
+
+static int btfmerge_add_btf(struct btf *output_btf, const char *file)
+{
+	unsigned int *ids = NULL;
+	int err, i, n, start_id;
+	struct btf *btf = NULL;
+	
+	start_id = base_btf ? btf__type_cnt(base_btf) : 1;
+
+	btf = btf__parse_split(file, base_btf);
+	if (!btf) {
+		err = -errno;
+		p_err("failed to load BTF from %s: %s", file, strerror(errno));
+		goto out;
+	}
+	
+	n = btf__type_cnt(btf);
+	ids = calloc(n, sizeof(*ids));
+	if (!ids) {
+		err = -errno;
+		goto out;
+	}
+
+	/* retain base_btf IDs */
+	for (i = 0; i < start_id; i++) {
+		ids[i] = i;
+	}
+	
+	/* add types to merged output */
+	for (i = start_id; i < n; i++) {
+		struct btf_type *btf_type = (struct btf_type *) btf__type_by_id(btf, i);
+		int new_id = btf__add_type(output_btf, btf, btf_type);
+		if (new_id < 0) {
+			err = new_id;
+			goto out;
+		}
+
+		ids[i] = new_id;
+	}
+
+	/* fix up type ids */
+	for (i = start_id; i < n; i++) {
+		struct btf_type *btf_type = (struct btf_type *) btf__type_by_id(output_btf, ids[i]);
+		err = btf_type_visit_type_ids(btf_type, btfmerge_remap_id, ids);
+		if (err)
+			goto out;
+	}
+
+out:
+	btf__free(btf);
+	free(ids);
+	return err;
+}
+
+static int do_merge(int argc, char **argv)
+{
+	LIBBPF_OPTS(btf_dedup_opts, opts);
+	const char *output_file, *file;
+	struct btf *output_btf = NULL;	
+	int err = 0;
+	
+	if (!REQ_ARGS(2)) {
+		usage();
+		return -1;
+	}
+
+	output_file = GET_ARG();
+	output_btf = base_btf ? btfmerge_clone_btf(base_btf) : btf__new_empty();
+	if (!output_btf) {
+		err = -errno;
+		goto out;
+	}
+
+	while (argc) {
+		file = GET_ARG();
+		
+		err = btfmerge_add_btf(output_btf, file);
+		if (err < 0) {
+			p_err("error merging btf for %s: %s", file, strerror(errno));
+			goto out;
+		}
+	}
+
+	err = btf__dedup(output_btf, &opts);
+	if (err) {
+		p_err("btf dedup failed: %d\n", err);
+		goto out;
+	}
+
+	err = btf_save_raw(output_btf, output_file);
+	if (err) {
+		p_err("error saving btf file: %s", strerror(errno));
+		goto out;
+	}
+
+out:
+	btf__free(output_btf);
+	return err;
+}
+
 static int do_help(int argc, char **argv)
 {
 	if (json_output) {
@@ -1060,6 +1178,7 @@ static int do_help(int argc, char **argv)
 	fprintf(stderr,
 		"Usage: %1$s %2$s { show | list } [id BTF_ID]\n"
 		"       %1$s %2$s dump BTF_SRC [format FORMAT]\n"
+		"       %1$s %2$s merge OUTPUT_FILE INPUT_FILE [INPUT_FILE...]\n"
 		"       %1$s %2$s help\n"
 		"\n"
 		"       BTF_SRC := { id BTF_ID | prog PROG | map MAP [{key | value | kv | all}] | file FILE }\n"
@@ -1079,6 +1198,7 @@ static const struct cmd cmds[] = {
 	{ "list",	do_show },
 	{ "help",	do_help },
 	{ "dump",	do_dump },
+	{ "merge",	do_merge },
 	{ 0 }
 };
 
