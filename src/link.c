@@ -650,7 +650,9 @@ static const char * const pf2name[] = {
 	[NFPROTO_INET] = "inet",
 	[NFPROTO_IPV4] = "ip",
 	[NFPROTO_ARP] = "arp",
+#ifdef NFPROTO_NETDEV
 	[NFPROTO_NETDEV] = "netdev",
+#endif
 	[NFPROTO_BRIDGE] = "bridge",
 	[NFPROTO_IPV6] = "ip6",
 };
